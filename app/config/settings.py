@@ -12,8 +12,7 @@ class Settings(BaseSettings):
     
     # External API Keys
     BRAVE_SEARCH_API_KEY: str = ""
-    BING_SEARCH_API_KEY: str = ""
-    BING_AUTOSUGGEST_API_KEY: str = ""
+    SERPAPI_API_KEY: str = ""  # Replaced BING_SEARCH_API_KEY and BING_AUTOSUGGEST_API_KEY
     ZENROWS_API_KEY: str = ""
     
     # LLM Configuration
@@ -42,6 +41,7 @@ class Settings(BaseSettings):
     MAX_SOURCES_PER_QUERY: int = 8
     MAX_CONCURRENT_REQUESTS: int = 100
     ZENROWS_MONTHLY_BUDGET: float = 200.0
+    SERPAPI_MONTHLY_BUDGET: float = 100.0  # New: SerpApi budget limit
     
     # Performance
     REQUEST_TIMEOUT: int = 30
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     @validator("ALLOWED_ORIGINS", pre=True)
     def parse_cors_origins(cls, v):
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
+            return [origin.strip() for origin in v.split(","]
         return v
     
     @validator("DEBUG", pre=True)
