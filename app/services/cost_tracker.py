@@ -21,8 +21,7 @@ class RequestCost:
     start_time: float
     end_time: Optional[float] = None
     brave_searches: int = 0
-    bing_searches: int = 0
-    bing_autosuggest_calls: int = 0
+    serpapi_searches: int = 0  # Replaced bing_searches and bing_autosuggest_calls
     zenrows_requests: int = 0
     llm_tokens: int = 0
     total_cost: float = 0.0
@@ -30,24 +29,24 @@ class RequestCost:
     search_request_db_id: Optional[UUID] = None  # Database ID
 
 class DatabaseCostTracker:
-    """Enhanced cost tracker with database integration"""
+    """Enhanced cost tracker with database integration and SerpApi support"""
     
     def __init__(self):
         self.cache = CacheService()
         self.active_requests: Dict[str, RequestCost] = {}
         
-        # Cost rates (USD)
+        # Updated cost rates (USD)
         self.cost_rates = {
-            "brave_search": 0.005,      # $0.005 per search
-            "bing_search": 0.003,       # $0.003 per search
-            "bing_autosuggest": 0.001,  # $0.001 per suggestion call
-            "zenrows_request": 0.01,    # $0.01 per request
-            "llm_token": 0.0,           # Ollama is free (local)
+            "brave_search": 0.005,          # $0.005 per search
+            "serpapi_search": 0.02,         # $0.02 per search (typical SerpApi rate)
+            "zenrows_request": 0.01,        # $0.01 per request
+            "llm_token": 0.0,               # Ollama is free (local)
         }
         
         # Daily budget tracking
         self.daily_budget = settings.DAILY_BUDGET_USD
         self.monthly_zenrows_budget = settings.ZENROWS_MONTHLY_BUDGET
+        self.monthly_serpapi_budget = settings.SERPAPI_MONTHLY_BUDGET
     
     async def start_request(self, request_id: str, user_id: Optional[str] = None, 
                           search_request_db_id: Optional[UUID] = None):
@@ -87,47 +86,26 @@ class DatabaseCostTracker:
         except Exception as e:
             logger.error(f"Error tracking Brave search cost: {e}")
     
-    async def track_bing_search(self, request_id: str, num_searches: int = 1):
-        """Track Bing search API usage"""
+    async def track_serpapi_search(self, request_id: str, num_searches: int = 1):
+        """Track SerpApi search usage"""
         try:
             if request_id in self.active_requests:
-                self.active_requests[request_id].bing_searches += num_searches
-                cost = num_searches * self.cost_rates["bing_search"]
+                self.active_requests[request_id].serpapi_searches += num_searches
+                cost = num_searches * self.cost_rates["serpapi_search"]
                 self.active_requests[request_id].total_cost += cost
                 
                 # Log to database
                 await self._log_api_usage(
                     request_id=request_id,
-                    provider="bing_search",
+                    provider="serpapi",
                     cost=cost,
                     calls=num_searches
                 )
                 
-                logger.debug(f"Tracked {num_searches} Bing searches for {request_id}: +${cost:.4f}")
+                logger.debug(f"Tracked {num_searches} SerpApi searches for {request_id}: +${cost:.4f}")
             
         except Exception as e:
-            logger.error(f"Error tracking Bing search cost: {e}")
-    
-    async def track_bing_autosuggest(self, request_id: str, num_calls: int = 1):
-        """Track Bing Autosuggest API usage"""
-        try:
-            if request_id in self.active_requests:
-                self.active_requests[request_id].bing_autosuggest_calls += num_calls
-                cost = num_calls * self.cost_rates["bing_autosuggest"]
-                self.active_requests[request_id].total_cost += cost
-                
-                # Log to database
-                await self._log_api_usage(
-                    request_id=request_id,
-                    provider="bing_autosuggest",
-                    cost=cost,
-                    calls=num_calls
-                )
-                
-                logger.debug(f"Tracked {num_calls} Bing autosuggest calls for {request_id}: +${cost:.4f}")
-            
-        except Exception as e:
-            logger.error(f"Error tracking Bing autosuggest cost: {e}")
+            logger.error(f"Error tracking SerpApi search cost: {e}")
     
     async def track_zenrows_request(self, request_id: str, num_requests: int = 1):
         """Track ZenRows API usage"""
@@ -268,19 +246,38 @@ class DatabaseCostTracker:
                     if user:
                         user_db_id = user.id
                 
-                # Create cost record
+                # Create cost record with updated fields
                 await cost_repo.create_cost_record(
                     search_request_id=request_cost.search_request_db_id,
                     user_id=user_db_id,
                     brave_search_cost=request_cost.brave_searches * self.cost_rates["brave_search"],
-                    bing_search_cost=request_cost.bing_searches * self.cost_rates["bing_search"],
-                    bing_autosuggest_cost=request_cost.bing_autosuggest_calls * self.cost_rates["bing_autosuggest"],
+                    bing_search_cost=0.0,  # Legacy field, set to 0
+                    bing_autosuggest_cost=0.0,  # Legacy field, set to 0
                     zenrows_cost=request_cost.zenrows_requests * self.cost_rates["zenrows_request"],
                     llm_cost=request_cost.llm_tokens * self.cost_rates["llm_token"],
                     total_cost=request_cost.total_cost,
                     brave_searches=request_cost.brave_searches,
-                    bing_searches=request_cost.bing_searches,
-                    bing_autosuggest_calls=request_cost.bing_autosuggest_calls,
+                    bing_searches=0,  # Legacy field, set to 0
+                    bing_autosuggest_calls=0,  # Legacy field, set to 0
+                    zenrows_requests=request_cost.zenrows_requests,
+                    llm_tokens=request_cost.llm_tokens
+                )
+                
+                # Store SerpApi cost in a new field or as metadata
+                # For now, we'll add it to the existing bing_search_cost field for compatibility
+                # In production, you should add a serpapi_cost field to the database
+                await cost_repo.create_cost_record(
+                    search_request_id=request_cost.search_request_db_id,
+                    user_id=user_db_id,
+                    brave_search_cost=request_cost.brave_searches * self.cost_rates["brave_search"],
+                    bing_search_cost=request_cost.serpapi_searches * self.cost_rates["serpapi_search"],  # Store SerpApi cost here temporarily
+                    bing_autosuggest_cost=0.0,
+                    zenrows_cost=request_cost.zenrows_requests * self.cost_rates["zenrows_request"],
+                    llm_cost=request_cost.llm_tokens * self.cost_rates["llm_token"],
+                    total_cost=request_cost.total_cost,
+                    brave_searches=request_cost.brave_searches,
+                    bing_searches=request_cost.serpapi_searches,  # Store SerpApi searches here temporarily
+                    bing_autosuggest_calls=0,
                     zenrows_requests=request_cost.zenrows_requests,
                     llm_tokens=request_cost.llm_tokens
                 )
@@ -319,11 +316,10 @@ class DatabaseCostTracker:
                         date=today,
                         total_cost=daily_stats.total_cost + request_cost.total_cost,
                         brave_search_cost=daily_stats.brave_search_cost + (request_cost.brave_searches * self.cost_rates["brave_search"]),
-                        bing_search_cost=daily_stats.bing_search_cost + (request_cost.bing_searches * self.cost_rates["bing_search"]),
+                        bing_search_cost=daily_stats.bing_search_cost + (request_cost.serpapi_searches * self.cost_rates["serpapi_search"]),  # Store SerpApi cost here
                         zenrows_cost=daily_stats.zenrows_cost + (request_cost.zenrows_requests * self.cost_rates["zenrows_request"]),
                         total_api_calls=daily_stats.total_api_calls + (
-                            request_cost.brave_searches + request_cost.bing_searches + 
-                            request_cost.bing_autosuggest_calls + request_cost.zenrows_requests
+                            request_cost.brave_searches + request_cost.serpapi_searches + request_cost.zenrows_requests
                         ),
                         total_llm_tokens=daily_stats.total_llm_tokens + request_cost.llm_tokens
                     )
@@ -333,11 +329,10 @@ class DatabaseCostTracker:
                         date=today,
                         total_cost=request_cost.total_cost,
                         brave_search_cost=request_cost.brave_searches * self.cost_rates["brave_search"],
-                        bing_search_cost=request_cost.bing_searches * self.cost_rates["bing_search"],
+                        bing_search_cost=request_cost.serpapi_searches * self.cost_rates["serpapi_search"],  # Store SerpApi cost here
                         zenrows_cost=request_cost.zenrows_requests * self.cost_rates["zenrows_request"],
                         total_api_calls=(
-                            request_cost.brave_searches + request_cost.bing_searches + 
-                            request_cost.bing_autosuggest_calls + request_cost.zenrows_requests
+                            request_cost.brave_searches + request_cost.serpapi_searches + request_cost.zenrows_requests
                         ),
                         total_llm_tokens=request_cost.llm_tokens
                     )
@@ -372,9 +367,16 @@ class DatabaseCostTracker:
                 if daily_cost > self.daily_budget:
                     logger.error(f"Daily budget exceeded: ${daily_cost:.2f} / ${self.daily_budget:.2f}")
                 
-                # ZenRows monthly budget check (simplified daily estimate)
+                # SerpApi monthly budget check (simplified daily estimate)
+                serpapi_daily_cost = daily_stats.bing_search_cost  # We're storing SerpApi cost in bing_search_cost field
+                estimated_monthly_serpapi = serpapi_daily_cost * 30  # Rough estimate
+                
+                if estimated_monthly_serpapi > self.monthly_serpapi_budget * 0.8:
+                    logger.warning(f"SerpApi monthly budget alert: estimated ${estimated_monthly_serpapi:.2f} / ${self.monthly_serpapi_budget:.2f}")
+                
+                # ZenRows monthly budget check
                 zenrows_daily_cost = daily_stats.zenrows_cost
-                estimated_monthly_zenrows = zenrows_daily_cost * 30  # Rough estimate
+                estimated_monthly_zenrows = zenrows_daily_cost * 30
                 
                 if estimated_monthly_zenrows > self.monthly_zenrows_budget * 0.8:
                     logger.warning(f"ZenRows monthly budget alert: estimated ${estimated_monthly_zenrows:.2f} / ${self.monthly_zenrows_budget:.2f}")
@@ -402,7 +404,7 @@ class DatabaseCostTracker:
                         "total_cost": 0.0,
                         "request_count": 0,
                         "brave_searches": 0,
-                        "bing_searches": 0,
+                        "serpapi_searches": 0,
                         "zenrows_requests": 0,
                         "llm_tokens": 0,
                         "budget_utilization": 0.0
@@ -413,7 +415,7 @@ class DatabaseCostTracker:
                     "total_cost": daily_stats.total_cost,
                     "request_count": daily_stats.total_requests,
                     "brave_search_cost": daily_stats.brave_search_cost,
-                    "bing_search_cost": daily_stats.bing_search_cost,
+                    "serpapi_search_cost": daily_stats.bing_search_cost,  # SerpApi cost stored in bing field
                     "zenrows_cost": daily_stats.zenrows_cost,
                     "total_api_calls": daily_stats.total_api_calls,
                     "total_llm_tokens": daily_stats.total_llm_tokens,
@@ -449,11 +451,11 @@ class DatabaseCostTracker:
                         "request_id": request_id,
                         "total_cost": cost_record.total_cost,
                         "brave_search_cost": cost_record.brave_search_cost,
-                        "bing_search_cost": cost_record.bing_search_cost,
+                        "serpapi_search_cost": cost_record.bing_search_cost,  # SerpApi cost stored in bing field
                         "zenrows_cost": cost_record.zenrows_cost,
                         "llm_cost": cost_record.llm_cost,
                         "brave_searches": cost_record.brave_searches,
-                        "bing_searches": cost_record.bing_searches,
+                        "serpapi_searches": cost_record.bing_searches,  # SerpApi searches stored in bing field
                         "zenrows_requests": cost_record.zenrows_requests,
                         "llm_tokens": cost_record.llm_tokens
                     }
@@ -481,7 +483,7 @@ class DatabaseCostTracker:
             
             breakdown = {
                 "brave_search": daily_stats.get("brave_search_cost", 0),
-                "bing_search": daily_stats.get("bing_search_cost", 0),
+                "serpapi_search": daily_stats.get("serpapi_search_cost", 0),  # Updated field name
                 "zenrows": daily_stats.get("zenrows_cost", 0),
                 "llm": 0.0,  # Ollama is free
                 "total": daily_stats.get("total_cost", 0)
