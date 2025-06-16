@@ -25,7 +25,7 @@ class QueryEnhancementService:
     def __init__(self):
         self.cache = CacheService()
         self.strategies = [
-            EnhancementStrategy("bing_autosuggest", 0.4),
+            EnhancementStrategy("google_autocomplete", 0.4),  # Replaced bing_autosuggest
             EnhancementStrategy("semantic_expansion", 0.3),
             EnhancementStrategy("domain_specific", 0.2),
             EnhancementStrategy("temporal_aware", 0.1)
@@ -60,8 +60,8 @@ class QueryEnhancementService:
             # Run enhancement strategies in parallel
             tasks = []
             
-            if self._is_strategy_enabled("bing_autosuggest") and settings.BING_AUTOSUGGEST_API_KEY:
-                tasks.append(self._bing_autosuggest(query))
+            if self._is_strategy_enabled("google_autocomplete"):
+                tasks.append(self._google_autocomplete(query))
                 
             if self._is_strategy_enabled("semantic_expansion"):
                 tasks.append(self._semantic_expansion(query))
@@ -106,42 +106,39 @@ class QueryEnhancementService:
             logger.error(f"Query enhancement failed: {e}")
             return [query]  # Fallback to original query
     
-    async def _bing_autosuggest(self, query: str) -> List[str]:
-        """Get suggestions from Bing Autosuggest API"""
-        if not settings.BING_AUTOSUGGEST_API_KEY:
-            return []
-            
+    async def _google_autocomplete(self, query: str) -> List[str]:
+        """Get suggestions from Google Autocomplete API (free, no API key needed)"""
         try:
             session = await self._get_session()
-            url = "https://api.bing.microsoft.com/v7.0/suggestions"
-            headers = {
-                "Ocp-Apim-Subscription-Key": settings.BING_AUTOSUGGEST_API_KEY
-            }
+            
+            # Use Google's public autocomplete API (used by Google Search)
+            url = "http://suggestqueries.google.com/complete/search"
             params = {
+                "client": "chrome",  # Chrome client for JSON response
                 "q": query,
-                "mkt": "en-US"
+                "hl": "en",  # Language
+                "gl": "us"   # Country
             }
             
-            async with session.get(url, headers=headers, params=params) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     suggestions = []
                     
-                    # Extract suggestions from response
-                    suggestion_groups = data.get("suggestionGroups", [])
-                    for group in suggestion_groups:
-                        for suggestion in group.get("searchSuggestions", []):
-                            display_text = suggestion.get("displayText", "")
-                            if display_text and display_text.lower() != query.lower():
-                                suggestions.append(display_text)
+                    # Google autocomplete returns array with suggestions in second element
+                    if len(data) > 1 and isinstance(data[1], list):
+                        for suggestion in data[1][:3]:  # Take top 3 suggestions
+                            if isinstance(suggestion, str) and suggestion.lower() != query.lower():
+                                suggestions.append(suggestion)
                     
-                    return suggestions[:3]  # Limit to top 3 suggestions
+                    logger.info(f"Google autocomplete returned {len(suggestions)} suggestions for: {query[:30]}...")
+                    return suggestions
                 else:
-                    logger.warning(f"Bing Autosuggest API returned status {response.status}")
+                    logger.warning(f"Google Autocomplete returned status {response.status}")
                     return []
                     
         except Exception as e:
-            logger.error(f"Bing autosuggest error: {e}")
+            logger.error(f"Google autocomplete error: {e}")
             return []
     
     async def _semantic_expansion(self, query: str) -> List[str]:
@@ -238,10 +235,8 @@ class QueryEnhancementService:
         return False
     
     async def get_suggestions_only(self, query: str) -> List[str]:
-        """Get only autosuggest suggestions without full enhancement"""
-        if settings.BING_AUTOSUGGEST_API_KEY:
-            return await self._bing_autosuggest(query)
-        return []
+        """Get only autocomplete suggestions without full enhancement"""
+        return await self._google_autocomplete(query)
     
     async def health_check(self) -> str:
         """Check query enhancement service health"""
