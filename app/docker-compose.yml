@@ -129,10 +129,28 @@ services:
         condition: service_healthy
     networks:
       - search-network
-    command: ["python", "scripts/init_database.py"]
+    command: ["python", "scripts/manage_migrations.py", "init"]
     restart: "no"
     profiles:
       - init
+
+  # SerpApi Migration Test Service
+  migration-test:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://searchuser:searchpass@db:5432/searchdb
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - search-network
+    command: ["python", "scripts/test_serpapi_migration.py"]
+    restart: "no"
+    profiles:
+      - test
 
   # Database seeding service (optional)
   db-seed:
