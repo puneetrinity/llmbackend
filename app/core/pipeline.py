@@ -96,9 +96,7 @@ class SearchPipeline:
                     stage_name="query_enhancement"
                 )
                 
-                # Track autosuggest API calls
-                if enhanced_queries and len(enhanced_queries) > 1:
-                    await self.cost_tracker.track_bing_autosuggest(request_id, 1)
+                # Note: Google Autocomplete is free, so no cost tracking needed
                 
                 # Stage 3: Parallel search (2-3 seconds target)
                 logger.info("Starting parallel search", extra={"request_id": request_id})
@@ -111,7 +109,7 @@ class SearchPipeline:
                 # Track search costs
                 search_count = len(enhanced_queries) if enhanced_queries else 1
                 await self.cost_tracker.track_brave_search(request_id, search_count)
-                await self.cost_tracker.track_bing_search(request_id, search_count)
+                await self.cost_tracker.track_serpapi_search(request_id, search_count)  # Changed from bing
                 
                 # Stage 4: Content fetching (3-5 seconds target)
                 logger.info("Starting content fetching", extra={"request_id": request_id})
@@ -165,16 +163,14 @@ class SearchPipeline:
                 if request_cost:
                     cost_breakdown = {
                         'brave_search': request_cost.brave_searches * self.cost_tracker.cost_rates["brave_search"],
-                        'bing_search': request_cost.bing_searches * self.cost_tracker.cost_rates["bing_search"],
-                        'bing_autosuggest': request_cost.bing_autosuggest_calls * self.cost_tracker.cost_rates["bing_autosuggest"],
+                        'serpapi_search': request_cost.serpapi_searches * self.cost_tracker.cost_rates["serpapi_search"],  # Updated
                         'zenrows': request_cost.zenrows_requests * self.cost_tracker.cost_rates["zenrows_request"],
                         'llm': request_cost.llm_tokens * self.cost_tracker.cost_rates["llm_token"]
                     }
                     
                     usage_counts = {
                         'brave_searches': request_cost.brave_searches,
-                        'bing_searches': request_cost.bing_searches,
-                        'bing_autosuggest_calls': request_cost.bing_autosuggest_calls,
+                        'serpapi_searches': request_cost.serpapi_searches,  # Updated
                         'zenrows_requests': request_cost.zenrows_requests,
                         'llm_tokens': request_cost.llm_tokens
                     }
@@ -363,7 +359,13 @@ class SearchPipeline:
                 "cache_status": cache_status,
                 "pipeline_health": self.is_healthy,
                 "last_health_check": self.last_health_check,
-                "database": db_stats
+                "database": db_stats,
+                "cost_breakdown": {
+                    "brave_search": cost_stats.get("brave_search_cost", 0.0),
+                    "serpapi_search": cost_stats.get("serpapi_search_cost", 0.0),  # Updated
+                    "zenrows": cost_stats.get("zenrows_cost", 0.0),
+                    "llm": 0.0  # Ollama is free
+                }
             }
             
             return stats
