@@ -1,4 +1,4 @@
-# Makefile for LLM Search Backend with Database Support
+# Makefile for LLM Search Backend with Database Support and Alembic Integration
 
 .PHONY: help setup install dev test lint format clean docker-build docker-up docker-down docker-logs backup
 
@@ -21,17 +21,21 @@ help:
 	@echo "  docker-logs    - View logs"
 	@echo "  docker-clean   - Clean Docker resources"
 	@echo ""
-	@echo "Database Commands:"
-	@echo "  db-init        - Initialize database with tables"
-	@echo "  db-migrate     - Run database migrations"
-	@echo "  db-upgrade     - Upgrade database to latest migration"
-	@echo "  db-downgrade   - Downgrade database (use: make db-downgrade REV=<revision>)"
+	@echo "Database Commands (Alembic):"
+	@echo "  db-init        - Initialize database with migrations"
+	@echo "  db-migrate     - Create new migration"
+	@echo "  db-upgrade     - Apply pending migrations"
+	@echo "  db-downgrade   - Downgrade to specific revision"
+	@echo "  db-status      - Show current migration status"
+	@echo "  db-history     - Show migration history"
+	@echo "  db-pending     - Show pending migrations"
+	@echo "  db-validate    - Validate migration scripts"
+	@echo "  db-stamp       - Stamp database with revision (use: make db-stamp REV=<revision>)"
 	@echo "  db-seed        - Seed database with test data"
 	@echo "  db-reset       - Reset database (WARNING: destroys all data)"
 	@echo "  db-backup      - Create database backup"
 	@echo "  db-restore     - Restore database from backup"
 	@echo "  db-shell       - Connect to database shell"
-	@echo "  db-status      - Show database migration status"
 	@echo ""
 	@echo "Services Management:"
 	@echo "  services-up    - Start support services (DB, Redis, Ollama)"
@@ -151,32 +155,47 @@ docker-clean:
 	docker-compose down -v
 	docker system prune -f
 
-# Database commands
+# Database commands (Alembic Integration)
 db-init:
-	@echo "Initializing database..."
-	python scripts/init_database.py
+	@echo "Initializing database with migrations..."
+	python scripts/manage_migrations.py init
 
 db-init-docker:
 	@echo "Initializing database in Docker..."
-	docker-compose --profile init up db-init
+	docker-compose exec api python scripts/manage_migrations.py init
 
 db-migrate:
 	@echo "Creating new database migration..."
 	@read -p "Enter migration message: " message; \
-	python scripts/create_alembic_migration.py --create "$$message"
+	python scripts/manage_migrations.py create "$$message"
 
 db-upgrade:
 	@echo "Upgrading database to latest migration..."
-	python scripts/create_alembic_migration.py --upgrade
+	python scripts/manage_migrations.py upgrade
 
 db-downgrade:
 	@echo "Downgrading database..."
-	python scripts/create_alembic_migration.py --downgrade $(REV)
+	python scripts/manage_migrations.py downgrade $(REV)
 
 db-status:
 	@echo "Checking database migration status..."
-	python scripts/create_alembic_migration.py --current
-	python scripts/create_alembic_migration.py --history
+	python scripts/manage_migrations.py current
+
+db-history:
+	@echo "Showing migration history..."
+	python scripts/manage_migrations.py history
+
+db-pending:
+	@echo "Showing pending migrations..."
+	python scripts/manage_migrations.py pending
+
+db-validate:
+	@echo "Validating migration scripts..."
+	python scripts/manage_migrations.py validate
+
+db-stamp:
+	@echo "Stamping database with revision..."
+	python scripts/manage_migrations.py stamp $(REV)
 
 db-seed:
 	@echo "Seeding database with test data..."
@@ -184,13 +203,14 @@ db-seed:
 
 db-seed-docker:
 	@echo "Seeding database in Docker..."
-	docker-compose --profile seed up db-seed
+	docker-compose exec api python scripts/seed_database.py
 
 db-reset:
 	@echo "⚠️  WARNING: This will destroy ALL data!"
 	@read -p "Type 'yes' to confirm: " confirm; \
 	if [ "$$confirm" = "yes" ]; then \
-		python scripts/init_database.py --reset; \
+		python scripts/manage_migrations.py stamp base; \
+		python scripts/manage_migrations.py upgrade; \
 	else \
 		echo "Database reset cancelled."; \
 	fi
@@ -262,7 +282,7 @@ check-apis:
 
 check-db:
 	@echo "Checking database connection..."
-	python -c "import asyncio; from app.database.connection import db_manager; asyncio.run(db_manager.initialize()); print('Database connection: OK')"
+	python scripts/manage_migrations.py current
 
 # Monitoring and maintenance
 logs:
@@ -396,12 +416,23 @@ help-docker:
 
 help-db:
 	@echo "Database Commands:"
-	@echo "  db-init                    - Initialize database schema"
+	@echo "  db-init                    - Initialize database schema with migrations"
 	@echo "  db-migrate                 - Create new migration"
 	@echo "  db-upgrade                 - Apply pending migrations"
 	@echo "  db-downgrade REV=<rev>     - Downgrade to specific revision"
+	@echo "  db-status                  - Show current migration status"
+	@echo "  db-history                 - Show migration history"
+	@echo "  db-pending                 - Show pending migrations"
+	@echo "  db-validate                - Validate migration scripts"
+	@echo "  db-stamp REV=<rev>         - Stamp database with specific revision"
 	@echo "  db-seed                    - Add sample data"
 	@echo "  db-reset                   - Reset database (destroys data)"
 	@echo "  db-backup                  - Create database backup"
 	@echo "  db-restore                 - Restore from backup"
 	@echo "  db-shell                   - Connect to database"
+
+# Alembic-specific commands (for advanced users)
+alembic-raw:
+	@echo "Running raw Alembic command..."
+	@read -p "Enter Alembic command (e.g., 'current -v'): " cmd; \
+	python scripts/manage_migrations.py raw $$cmd
