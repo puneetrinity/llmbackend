@@ -1,10 +1,10 @@
-# Makefile for LLM Search Backend with Database Support and Alembic Integration
+# Makefile for LLM Search Backend with SerpApi Migration Support
 
 .PHONY: help setup install dev test lint format clean docker-build docker-up docker-down docker-logs backup
 
 # Default target
 help:
-	@echo "LLM Search Backend with Database - Available Commands:"
+	@echo "LLM Search Backend with SerpApi Migration - Available Commands:"
 	@echo ""
 	@echo "Setup & Development:"
 	@echo "  setup          - Setup development environment"
@@ -13,6 +13,13 @@ help:
 	@echo "  test           - Run tests"
 	@echo "  lint           - Run code linting"
 	@echo "  format         - Format code with black and isort"
+	@echo ""
+	@echo "SerpApi Migration Commands:"
+	@echo "  migrate-serpapi      - Run SerpApi migration tests"
+	@echo "  migrate-serpapi-docker - Run migration tests in Docker"
+	@echo "  check-apis           - Check all API connections"
+	@echo "  migrate-db-serpapi   - Apply SerpApi database migration"
+	@echo "  migration-status     - Check migration status"
 	@echo ""
 	@echo "Docker Commands:"
 	@echo "  docker-build   - Build Docker images"
@@ -28,24 +35,14 @@ help:
 	@echo "  db-downgrade   - Downgrade to specific revision"
 	@echo "  db-status      - Show current migration status"
 	@echo "  db-history     - Show migration history"
-	@echo "  db-pending     - Show pending migrations"
 	@echo "  db-validate    - Validate migration scripts"
-	@echo "  db-stamp       - Stamp database with revision (use: make db-stamp REV=<revision>)"
-	@echo "  db-seed        - Seed database with test data"
-	@echo "  db-reset       - Reset database (WARNING: destroys all data)"
 	@echo "  db-backup      - Create database backup"
 	@echo "  db-restore     - Restore database from backup"
-	@echo "  db-shell       - Connect to database shell"
 	@echo ""
 	@echo "Services Management:"
 	@echo "  services-up    - Start support services (DB, Redis, Ollama)"
 	@echo "  services-down  - Stop support services"
 	@echo "  services-logs  - View service logs"
-	@echo ""
-	@echo "Maintenance:"
-	@echo "  clean          - Clean temporary files"
-	@echo "  clean-cache    - Clear application cache"
-	@echo "  clean-db       - Clean old database records"
 
 # Setup development environment
 setup:
@@ -73,26 +70,42 @@ dev:
 	@echo "Starting development server..."
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-# Run development server with auto-reload
-dev-watch:
-	@echo "Starting development server with file watching..."
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --reload-dir app
+# SerpApi Migration Commands
+migrate-serpapi:
+	@echo "🔄 Running SerpApi migration tests..."
+	python scripts/test_serpapi_migration.py
+
+migrate-serpapi-docker:
+	@echo "🔄 Running SerpApi migration tests in Docker..."
+	docker-compose --profile test run --rm migration-test
+
+check-apis:
+	@echo "🔍 Checking all API connections..."
+	python scripts/check_api_keys.py
+
+migrate-db-serpapi:
+	@echo "🗃️ Applying SerpApi database migration..."
+	python scripts/manage_migrations.py upgrade
+	@echo "✅ Database migration completed"
+
+migration-status:
+	@echo "📊 Checking migration status..."
+	@python -c "import os; print('SERPAPI_API_KEY:', '✅ Set' if os.getenv('SERPAPI_API_KEY') else '❌ Missing'); print('BING_SEARCH_API_KEY:', '⚠️ Still present' if os.getenv('BING_SEARCH_API_KEY') else '✅ Removed'); print('BING_AUTOSUGGEST_API_KEY:', '⚠️ Still present' if os.getenv('BING_AUTOSUGGEST_API_KEY') else '✅ Removed')"
 
 # Run tests
 test:
 	@echo "Running tests..."
 	pytest tests/ -v --cov=app --cov-report=html --cov-report=term
 
-# Run specific test file
-test-file:
-	@echo "Running specific test file..."
-	@read -p "Enter test file path: " filepath; \
-	pytest $$filepath -v
-
 # Test database operations
 test-db:
 	@echo "Running database tests..."
 	pytest tests/database/ -v
+
+# Test SerpApi integration specifically
+test-serpapi:
+	@echo "Running SerpApi integration tests..."
+	pytest tests/ -v -k "serpapi or search_engine"
 
 # Run linting
 lint:
@@ -106,12 +119,6 @@ format:
 	@echo "Formatting code..."
 	black app tests --line-length=100
 	isort app tests --profile=black
-
-# Check code style
-check-style:
-	@echo "Checking code style..."
-	black app tests --check --line-length=100
-	isort app tests --check-only --profile=black
 
 # Docker commands
 docker-build:
@@ -141,14 +148,6 @@ docker-logs:
 docker-logs-api:
 	@echo "Viewing API logs..."
 	docker-compose logs -f api
-
-docker-logs-db:
-	@echo "Viewing database logs..."
-	docker-compose logs -f db
-
-docker-restart:
-	@echo "Restarting services..."
-	docker-compose restart
 
 docker-clean:
 	@echo "Cleaning Docker resources..."
@@ -185,35 +184,9 @@ db-history:
 	@echo "Showing migration history..."
 	python scripts/manage_migrations.py history
 
-db-pending:
-	@echo "Showing pending migrations..."
-	python scripts/manage_migrations.py pending
-
 db-validate:
 	@echo "Validating migration scripts..."
 	python scripts/manage_migrations.py validate
-
-db-stamp:
-	@echo "Stamping database with revision..."
-	python scripts/manage_migrations.py stamp $(REV)
-
-db-seed:
-	@echo "Seeding database with test data..."
-	python scripts/seed_database.py
-
-db-seed-docker:
-	@echo "Seeding database in Docker..."
-	docker-compose exec api python scripts/seed_database.py
-
-db-reset:
-	@echo "⚠️  WARNING: This will destroy ALL data!"
-	@read -p "Type 'yes' to confirm: " confirm; \
-	if [ "$$confirm" = "yes" ]; then \
-		python scripts/manage_migrations.py stamp base; \
-		python scripts/manage_migrations.py upgrade; \
-	else \
-		echo "Database reset cancelled."; \
-	fi
 
 db-backup:
 	@echo "Creating database backup..."
@@ -239,20 +212,6 @@ db-restore:
 		echo "Backup file not found: $$filepath"; \
 	fi
 
-db-shell:
-	@echo "Connecting to database shell..."
-	@if command -v docker-compose >/dev/null 2>&1; then \
-		docker-compose exec db psql -U searchuser -d searchdb; \
-	else \
-		psql -h localhost -U searchuser searchdb; \
-	fi
-
-db-clean:
-	@echo "Cleaning old database records..."
-	@read -p "Delete records older than how many days? (default: 30): " days; \
-	days=$${days:-30}; \
-	python -c "import asyncio; from app.api.endpoints.admin import cleanup_database; print('Cleaning records older than $$days days...')"
-
 # Services management
 services-up:
 	@echo "Starting support services (DB, Redis, Ollama)..."
@@ -266,42 +225,11 @@ services-logs:
 	@echo "Viewing service logs..."
 	docker-compose logs -f db redis ollama
 
-services-restart:
-	@echo "Restarting support services..."
-	docker-compose restart db redis ollama
-
 # Development utilities
 install-ollama:
 	@echo "Installing Ollama locally..."
 	curl -fsSL https://ollama.ai/install.sh | sh
 	ollama pull llama2:7b
-
-check-apis:
-	@echo "Checking API connections..."
-	python scripts/check_api_keys.py
-
-check-db:
-	@echo "Checking database connection..."
-	python scripts/manage_migrations.py current
-
-# Monitoring and maintenance
-logs:
-	@echo "Viewing application logs..."
-	tail -f logs/app.log
-
-monitor:
-	@echo "Starting monitoring dashboard..."
-	@echo "Open http://localhost:8080 for pgAdmin"
-	@echo "Open http://localhost:8081 for Redis Commander"
-	@echo "Open http://localhost:3000 for Grafana (if monitoring profile is up)"
-
-health:
-	@echo "Checking application health..."
-	curl -s http://localhost:8000/health/detailed | jq '.' || curl -s http://localhost:8000/health/detailed
-
-stats:
-	@echo "Getting application statistics..."
-	curl -s http://localhost:8000/api/v1/search/stats | jq '.' || curl -s http://localhost:8000/api/v1/search/stats
 
 # Cache management
 clean-cache:
@@ -328,111 +256,98 @@ clean:
 	rm -rf .mypy_cache/
 	rm -rf dist/
 	rm -rf build/
+	rm -f serpapi_migration_test_results.json
 
 # Production deployment
 deploy-prod:
 	@echo "Deploying to production..."
 	docker-compose -f docker-compose.yml --profile production up -d
 
-deploy-staging:
-	@echo "Deploying to staging..."
-	docker-compose -f docker-compose.yml up -d
-
-# Quick development setup
-quick-start:
-	@echo "Quick start for development..."
+# Quick development setup with SerpApi
+quick-start-serpapi:
+	@echo "Quick start with SerpApi setup..."
 	cp .env.example .env
 	@echo "✅ Environment file created (.env)"
 	@echo ""
-	@echo "Next steps:"
-	@echo "1. Edit .env file with your API keys"
-	@echo "2. Run: make docker-up"
-	@echo "3. Run: make db-init-docker"
-	@echo "4. Optional: make db-seed-docker"
-	@echo "5. Visit: http://localhost:8000/docs"
-
-quick-start-local:
-	@echo "Quick start for local development..."
-	cp .env.example .env
-	make install-dev
-	make services-up
-	sleep 10
-	make db-init
+	@echo "⚠️  IMPORTANT: Add your SerpApi API key to .env file:"
+	@echo "   SERPAPI_API_KEY=your_serpapi_key_here"
 	@echo ""
-	@echo "✅ Local development environment ready!"
-	@echo "Run: make dev"
+	@echo "Next steps:"
+	@echo "1. Get SerpApi key from https://serpapi.com/"
+	@echo "2. Edit .env file with your API keys"
+	@echo "3. Run: make docker-up"
+	@echo "4. Run: make migrate-db-serpapi"
+	@echo "5. Run: make migrate-serpapi-docker"
+	@echo "6. Visit: http://localhost:8000/docs"
 
-# Security and maintenance
-security-check:
-	@echo "Running security checks..."
-	bandit -r app -f json -o security-report.json
-	@echo "Security report generated: security-report.json"
-
-update-deps:
-	@echo "Updating dependencies..."
-	pip list --outdated
-	@echo "Review outdated packages above and update requirements.txt manually"
-
-# Performance testing
-perf-test:
-	@echo "Running performance tests..."
-	@echo "Performance testing not implemented yet"
-	@echo "Consider using tools like locust or wrk for load testing"
+# Comprehensive migration workflow
+migrate-complete:
+	@echo "🚀 Running complete SerpApi migration workflow..."
+	@echo ""
+	@echo "Step 1: Checking current setup..."
+	make migration-status
+	@echo ""
+	@echo "Step 2: Checking API connectivity..."
+	make check-apis
+	@echo ""
+	@echo "Step 3: Applying database migrations..."
+	make migrate-db-serpapi
+	@echo ""
+	@echo "Step 4: Running comprehensive tests..."
+	make migrate-serpapi
+	@echo ""
+	@echo "✅ Migration workflow completed!"
+	@echo "Check the test results and resolve any issues before production use."
 
 # Development helpers
-create-user:
-	@echo "Creating test user..."
-	python -c "import asyncio; from scripts.create_test_user import create_user; asyncio.run(create_user())"
-
-sample-request:
-	@echo "Making sample search request..."
+sample-request-serpapi:
+	@echo "Making sample search request to test SerpApi integration..."
 	curl -X POST http://localhost:8000/api/v1/search \
 		-H "Content-Type: application/json" \
-		-d '{"query": "artificial intelligence trends", "max_results": 5}' | jq '.'
+		-d '{"query": "SerpApi vs Bing Search API", "max_results": 5}' | jq '.'
 
-# Comprehensive setup for new developers
-setup-dev-env:
-	@echo "Setting up complete development environment..."
-	make setup
-	@echo "Virtual environment created. Now run:"
-	@echo "source venv/bin/activate"
-	@echo "make install-dev"
-	@echo "make quick-start-local"
+health-check-serpapi:
+	@echo "Checking system health after SerpApi migration..."
+	curl -s http://localhost:8000/health/detailed | jq '.' || curl -s http://localhost:8000/health/detailed
 
-# Variables for parameterized commands
-DAYS ?= 30
-REV ?= -1
-ENV ?= development
+cost-analysis-serpapi:
+	@echo "Analyzing costs after SerpApi migration..."
+	curl -s http://localhost:8000/api/v1/search/analytics/costs | jq '.' || curl -s http://localhost:8000/api/v1/search/analytics/costs
+
+# Migration verification
+verify-migration:
+	@echo "🔍 Verifying SerpApi migration..."
+	@echo ""
+	@echo "1. Configuration check:"
+	make migration-status
+	@echo ""
+	@echo "2. API connectivity:"
+	make check-apis
+	@echo ""
+	@echo "3. Health check:"
+	make health-check-serpapi
+	@echo ""
+	@echo "4. Sample request:"
+	make sample-request-serpapi
+	@echo ""
+	@echo "5. Cost analysis:"
+	make cost-analysis-serpapi
 
 # Help for specific categories
-help-docker:
-	@echo "Docker Commands:"
-	@echo "  docker-build               - Build all Docker images"
-	@echo "  docker-up                  - Start all services"
-	@echo "  docker-up-with-tools       - Start with pgAdmin and Redis Commander"
-	@echo "  docker-up-with-monitoring  - Start with monitoring stack"
-	@echo "  docker-down                - Stop all services"
-	@echo "  docker-clean               - Remove all containers and volumes"
+help-migration:
+	@echo "SerpApi Migration Commands:"
+	@echo "  migrate-serpapi           - Run comprehensive migration tests"
+	@echo "  migrate-serpapi-docker    - Run migration tests in Docker"
+	@echo "  check-apis                - Check all API connections"
+	@echo "  migrate-db-serpapi        - Apply database migration for SerpApi"
+	@echo "  migration-status          - Check current migration status"
+	@echo "  quick-start-serpapi       - Quick setup guide for SerpApi"
+	@echo "  migrate-complete          - Run complete migration workflow"
+	@echo "  verify-migration          - Verify migration success"
+	@echo "  sample-request-serpapi    - Test with sample request"
+	@echo "  health-check-serpapi      - Check system health"
+	@echo "  cost-analysis-serpapi     - Analyze costs after migration"
 
-help-db:
-	@echo "Database Commands:"
-	@echo "  db-init                    - Initialize database schema with migrations"
-	@echo "  db-migrate                 - Create new migration"
-	@echo "  db-upgrade                 - Apply pending migrations"
-	@echo "  db-downgrade REV=<rev>     - Downgrade to specific revision"
-	@echo "  db-status                  - Show current migration status"
-	@echo "  db-history                 - Show migration history"
-	@echo "  db-pending                 - Show pending migrations"
-	@echo "  db-validate                - Validate migration scripts"
-	@echo "  db-stamp REV=<rev>         - Stamp database with specific revision"
-	@echo "  db-seed                    - Add sample data"
-	@echo "  db-reset                   - Reset database (destroys data)"
-	@echo "  db-backup                  - Create database backup"
-	@echo "  db-restore                 - Restore from backup"
-	@echo "  db-shell                   - Connect to database"
-
-# Alembic-specific commands (for advanced users)
-alembic-raw:
-	@echo "Running raw Alembic command..."
-	@read -p "Enter Alembic command (e.g., 'current -v'): " cmd; \
-	python scripts/manage_migrations.py raw $$cmd
+# Variables for parameterized commands
+REV ?= -1
+ENV ?= development
