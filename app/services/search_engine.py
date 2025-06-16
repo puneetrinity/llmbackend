@@ -20,7 +20,7 @@ class MultiSearchEngine:
         self.session = None
         self.search_engines = {
             "brave": self._brave_search,
-            "bing": self._bing_search
+            "serpapi": self._serpapi_search  # Replaced bing with serpapi
         }
         
     async def _get_session(self):
@@ -59,8 +59,8 @@ class MultiSearchEngine:
                 if settings.BRAVE_SEARCH_API_KEY:
                     tasks.append(self._search_with_engine("brave", query, max_results_per_query))
                 
-                if settings.BING_SEARCH_API_KEY:
-                    tasks.append(self._search_with_engine("bing", query, max_results_per_query))
+                if settings.SERPAPI_API_KEY:  # Changed from BING_SEARCH_API_KEY
+                    tasks.append(self._search_with_engine("serpapi", query, max_results_per_query))
             
             # Execute all search tasks in parallel
             if tasks:
@@ -69,7 +69,7 @@ class MultiSearchEngine:
                 # Process results and cache them
                 query_results = {}
                 for i, result in enumerate(results):
-                    query_idx = i // len([k for k in self.search_engines.keys() if getattr(settings, f"{k.upper()}_SEARCH_API_KEY")])
+                    query_idx = i // len([k for k in self.search_engines.keys() if getattr(settings, f"{k.upper()}_SEARCH_API_KEY" if k != "serpapi" else "SERPAPI_API_KEY")])
                     query = queries[query_idx] if query_idx < len(queries) else queries[0]
                     
                     if isinstance(result, list):
@@ -159,51 +159,54 @@ class MultiSearchEngine:
             logger.error(f"Brave search error: {e}")
             return []
     
-    async def _bing_search(self, query: str, max_results: int = 10) -> List[SearchResult]:
-        """Search using Bing Search API"""
-        if not settings.BING_SEARCH_API_KEY:
+    async def _serpapi_search(self, query: str, max_results: int = 10) -> List[SearchResult]:
+        """Search using SerpApi (Google Search)"""
+        if not settings.SERPAPI_API_KEY:
             return []
             
         try:
             session = await self._get_session()
-            url = "https://api.bing.microsoft.com/v7.0/search"
-            headers = {
-                "Ocp-Apim-Subscription-Key": settings.BING_SEARCH_API_KEY
-            }
+            url = "https://serpapi.com/search"
             params = {
                 "q": query,
-                "count": min(max_results, 50),  # Bing API max is 50
-                "offset": 0,
-                "mkt": "en-US",
-                "safesearch": "Moderate",
-                "responseFilter": "Webpages"
+                "api_key": settings.SERPAPI_API_KEY,
+                "engine": "google",  # Use Google as the search engine
+                "num": min(max_results, 20),  # Number of results
+                "hl": "en",  # Language
+                "gl": "us",  # Country
+                "safe": "active",  # Safe search
+                "output": "json"
             }
             
-            async with session.get(url, headers=headers, params=params) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     results = []
                     
-                    web_pages = data.get("webPages", {}).get("value", [])
-                    for item in web_pages:
+                    # SerpApi returns results in 'organic_results'
+                    organic_results = data.get("organic_results", [])
+                    for item in organic_results:
                         result = SearchResult(
-                            title=item.get("name", ""),
-                            url=item.get("url", ""),
+                            title=item.get("title", ""),
+                            url=item.get("link", ""),
                             snippet=item.get("snippet", ""),
-                            source_engine="bing",
+                            source_engine="serpapi",
                             relevance_score=self._calculate_relevance_score(item, query)
                         )
                         results.append(result)
                     
-                    logger.info(f"Bing search returned {len(results)} results for: {query[:30]}...")
+                    logger.info(f"SerpApi search returned {len(results)} results for: {query[:30]}...")
                     return results
                     
                 else:
-                    logger.warning(f"Bing Search API returned status {response.status}")
+                    logger.warning(f"SerpApi returned status {response.status}")
+                    # Log response text for debugging
+                    error_text = await response.text()
+                    logger.warning(f"SerpApi error response: {error_text[:200]}...")
                     return []
                     
         except Exception as e:
-            logger.error(f"Bing search error: {e}")
+            logger.error(f"SerpApi search error: {e}")
             return []
     
     def _calculate_relevance_score(self, item: Dict, query: str) -> float:
@@ -211,8 +214,20 @@ class MultiSearchEngine:
         try:
             score = 0.5  # Base score
             
-            title = item.get("title", "").lower() if "title" in item else item.get("name", "").lower()
-            snippet = item.get("snippet", "").lower() if "snippet" in item else item.get("description", "").lower()
+            # Handle different field names for different APIs
+            title = ""
+            snippet = ""
+            
+            # Brave API uses 'title' and 'description'
+            if "title" in item:
+                title = item.get("title", "").lower()
+            if "description" in item:
+                snippet = item.get("description", "").lower()
+            
+            # SerpApi uses 'title' and 'snippet'
+            if "snippet" in item:
+                snippet = item.get("snippet", "").lower()
+            
             query_lower = query.lower()
             
             # Title relevance (higher weight)
@@ -231,6 +246,15 @@ class MultiSearchEngine:
             if query_terms:
                 coverage = matching_terms / len(query_terms)
                 score += coverage * 0.2
+            
+            # SerpApi specific: Check for position (higher positions get bonus)
+            if "position" in item:
+                position = item.get("position", 10)
+                # Give bonus for top 3 results
+                if position <= 3:
+                    score += 0.1
+                elif position <= 5:
+                    score += 0.05
             
             # Ensure score is between 0 and 1
             return min(max(score, 0.0), 1.0)
